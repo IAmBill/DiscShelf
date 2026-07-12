@@ -1,5 +1,7 @@
 # DiscShelf prototype
 
+THIS PROJECT WAS BUILT WITH THE SUPPORT OF CHAT-GPT 5.8 Sol.
+
 DiscShelf presents a fullscreen list of discs and replaces itself with the
 configured emulator launcher after a selection. It uses GTK 4 and PyGObject,
 which are already installed on Bazzite.
