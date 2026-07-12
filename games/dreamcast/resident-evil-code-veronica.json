@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "title": "Resident Evil Code: Veronica",
+  "background": {"image": "", "dim": 0.7},
+  "music": {"path": "", "volume": 0.35, "loop": true},
+  "selector": {
+    "layout": {
+      "preset": "list",
+      "columns": 1,
+      "rows": 4
+    }
+  },
+  "launch": {
+    "command": "/home/bazzite/Emulation/tools/launchers/retroarch.sh",
+    "arguments": ["-L", "/flycast_libretro.so", "{disc_path}"]
+  },
+  "discs": [
+    {
+      "label": "Disc 1",
+      "artwork": "",
+      "animation": {"type": "none", "delay": 2.5},
+      "path": "/home/bazzite/Emulation/roms/dreamcast/Resident Evil - Code Veronica - CD1.cdi"
+    },
+    {
+      "label": "Disc 2",
+      "artwork": "",
+      "animation": {"type": "none", "delay": 2.5},
+      "path": "/home/bazzite/Emulation/roms/dreamcast/Resident Evil Code Veronica - CD2.cdi"
+    }
+  ]
+}

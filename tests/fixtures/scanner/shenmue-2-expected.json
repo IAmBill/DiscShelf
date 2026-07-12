@@ -1,0 +1,24 @@
+{
+  "title": "Shenmue 2",
+  "platformRoot": "/home/bazzite/Emulation/roms/dreamcast",
+  "commonAncestor": "/home/bazzite/Emulation/roms/dreamcast/Shenmue 2",
+  "manifestPath": "/home/bazzite/Emulation/roms/dreamcast/Shenmue 2/Shenmue 2.discshelf.json",
+  "discs": [
+    "/home/bazzite/Emulation/roms/dreamcast/Shenmue 2/Shenmue 2 (Disc 1)/SHENMUE2_DISC1.mds",
+    "/home/bazzite/Emulation/roms/dreamcast/Shenmue 2/Shenmue 2 (Disc 2)/SHENMUE2_DISC2.mds",
+    "/home/bazzite/Emulation/roms/dreamcast/Shenmue 2/Shenmue 2 (Disc 3)/SHENMUE2_DISC3.mds",
+    "/home/bazzite/Emulation/roms/dreamcast/Shenmue 2/Shenmue 2 (Disc 4)/SHENMUE2_DISC4.mds"
+  ],
+  "ignoredSidecars": [
+    "SHENMUE2_DISC1.mdf",
+    "SHENMUE2_DISC2.mdf",
+    "SHENMUE2_DISC3.mdf",
+    "SHENMUE2_DISC4.mdf"
+  ],
+  "requiredReasons": [
+    "four sequential disc markers",
+    "matching normalized title across sibling directories",
+    "MDS descriptors paired with MDF sidecars",
+    "shared nearest ancestor"
+  ]
+}

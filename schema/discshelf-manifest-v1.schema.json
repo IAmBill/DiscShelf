@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://discshelf.dev/schema/discshelf-manifest-v1.schema.json",
+  "title": "DiscShelf Manifest v1",
+  "type": "object",
+  "required": ["version", "title", "launch", "discs"],
+  "properties": {
+    "version": {"const": 1},
+    "title": {"type": "string", "minLength": 1},
+    "background": {
+      "type": "object",
+      "properties": {
+        "image": {"type": "string"},
+        "dim": {"type": "number", "minimum": 0, "maximum": 1}
+      },
+      "additionalProperties": false
+    },
+    "music": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"},
+        "volume": {"type": "number", "minimum": 0, "maximum": 1},
+        "loop": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "selector": {
+      "type": "object",
+      "properties": {
+        "layout": {
+          "type": "object",
+          "properties": {
+            "preset": {
+              "enum": ["list", "showcase", "strip", "compact", "wide-grid", "widegrid"]
+            },
+            "columns": {"type": "integer", "minimum": 1},
+            "rows": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "launch": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": {"type": "string", "minLength": 1},
+        "arguments": {"type": "array", "items": {"type": "string"}},
+        "playlist": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "discs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["label", "path"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "artwork": {"type": "string"},
+          "animation": {
+            "type": "object",
+            "properties": {
+              "type": {"enum": ["none", "spin", "wiggle"]},
+              "delay": {"type": "number", "minimum": 0},
+              "revolutionsPerMinute": {"type": "number", "minimum": 0},
+              "angle": {"type": "number", "minimum": 0, "maximum": 360},
+              "distance": {"type": "number", "minimum": 0},
+              "period": {"type": "number", "minimum": 0.1}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

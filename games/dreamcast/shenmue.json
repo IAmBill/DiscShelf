@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "title": "Shenmue",
+  "background": {"image": "/home/bazzite/Downloads/shenmue_background.jpg", "dim": 0.7},
+  "music": {"path": "/home/bazzite/Downloads/shenmue_music.mp3", "volume": 0.35, "loop": true},
+  "selector": {
+    "layout": {
+      "preset": "showcase",
+      "columns": 1,
+      "rows": 1
+    }
+  },
+  "launch": {
+    "command": "/home/bazzite/Emulation/tools/launchers/retroarch.sh",
+    "arguments": ["-L", "/flycast_libretro.so", "{disc_path}"]
+  },
+  "discs": [
+    {
+      "label": "Disc 1",
+      "artwork": "/home/bazzite/Downloads/shenmue-disc1.png",
+      "animation": {"type": "spin", "delay": 2.5, "revolutionsPerMinute": 18},
+      "path": "/home/bazzite/Emulation/roms/dreamcast/Shenmue/Shenmue (Europe)(Disc 1 of 4)[DCCM].cdi"
+    },
+    {
+      "label": "Disc 2",
+      "artwork": "/home/bazzite/Downloads/shenmue-disc2.png",
+      "animation": {"type": "spin", "delay": 2.5, "revolutionsPerMinute": 18},
+      "path": "/home/bazzite/Emulation/roms/dreamcast/Shenmue/Shenmue (Europe)(Disc 2 of 4)[DCCM].cdi"
+    },
+    {
+      "label": "Disc 3",
+      "artwork": "/home/bazzite/Downloads/shenmue-disc3.png",
+      "animation": {"type": "spin", "delay": 2.5, "revolutionsPerMinute": 18},
+      "path": "/home/bazzite/Emulation/roms/dreamcast/Shenmue/Shenmue (Europe)(Disc 3 of 4)[DCCM].cdi"
+    },
+    {
+      "label": "Passport Disc",
+      "artwork": "/home/bazzite/Downloads/shenmue-disc4.png",
+      "animation": {"type": "spin", "delay": 2.5, "revolutionsPerMinute": 18},
+      "path": "/home/bazzite/Emulation/roms/dreamcast/Shenmue/Shenmue (Europe)(Disc 4 of 4)[Passport][DCCM].cdi"
+    }
+  ]
+}
