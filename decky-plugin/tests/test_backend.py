@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import asyncio
 import importlib.util
 import json
 import logging
@@ -49,8 +50,12 @@ class BackendTests(unittest.TestCase):
             manifest.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
             background = Path(directory) / "background.png"
             music = Path(directory) / "music.mp3"
+            disc_image = Path(directory) / "disc.chd"
+            disc_artwork = Path(directory) / "disc.png"
             background.touch()
             music.touch()
+            disc_image.touch()
+            disc_artwork.touch()
             with mock.patch.object(backend, "manifest_paths", return_value=([manifest], [Path(directory)])):
                 settings = backend.manifest_settings(manifest)
                 settings.update(
@@ -62,6 +67,21 @@ class BackendTests(unittest.TestCase):
                     musicPath=str(music),
                     musicVolume=0.25,
                     musicLoop=False,
+                    discs=[
+                        {
+                            "label": "Bonus Disc",
+                            "path": str(disc_image),
+                            "artwork": str(disc_artwork),
+                            "animation": {
+                                "type": "wiggle",
+                                "delay": 1.5,
+                                "revolutionsPerMinute": 12,
+                                "angle": 25,
+                                "distance": 8,
+                                "period": 2.0,
+                            },
+                        }
+                    ],
                 )
                 updated = backend.save_manifest_settings(manifest, settings)
 
@@ -69,9 +89,13 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(updated["columns"], 3)
             self.assertEqual(updated["backgroundImage"], str(background))
             self.assertEqual(updated["musicPath"], str(music))
+            self.assertEqual(updated["discs"][0]["label"], "Bonus Disc")
+            self.assertEqual(updated["discs"][0]["animation"]["type"], "wiggle")
             payload = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(payload["selector"]["layout"]["rows"], 2)
             self.assertFalse(payload["music"]["loop"])
+            self.assertEqual(payload["discs"][0]["path"], str(disc_image))
+            self.assertEqual(payload["discs"][0]["animation"]["angle"], 25.0)
 
     def test_manifest_settings_reject_unsupported_media(self):
         source = ROOT / "games/dreamcast/shenmue.json"
@@ -85,6 +109,41 @@ class BackendTests(unittest.TestCase):
                 settings["backgroundImage"] = str(unsupported)
                 with self.assertRaisesRegex(ValueError, "unsupported file type"):
                     backend.save_manifest_settings(manifest, settings)
+
+    def test_manifest_settings_require_at_least_one_disc(self):
+        source = ROOT / "games/dreamcast/shenmue.json"
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / "shenmue.discshelf.json"
+            manifest.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            with mock.patch.object(backend, "manifest_paths", return_value=([manifest], [Path(directory)])):
+                settings = backend.manifest_settings(manifest)
+                settings["discs"] = []
+                with self.assertRaisesRegex(ValueError, "at least one disc"):
+                    backend.save_manifest_settings(manifest, settings)
+
+    def test_image_preview_returns_a_data_url(self):
+        source = ROOT / "games/dreamcast/shenmue.json"
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = (Path(directory) / "shenmue.discshelf.json").resolve()
+            manifest.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            artwork = Path(directory) / "disc.png"
+            artwork.write_bytes(b"preview-image")
+            plugin = backend.Plugin()
+            with mock.patch.object(backend, "manifest_paths", return_value=([manifest], [Path(directory)])):
+                result = asyncio.run(plugin.get_image_preview(str(manifest), str(artwork)))
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["dataUrl"].startswith("data:image/png;base64,"))
+
+    def test_music_preview_uses_host_library_environment(self):
+        account = types.SimpleNamespace(pw_name="bazzite", pw_uid=1000)
+        with mock.patch.dict(
+            backend.os.environ,
+            {"LD_LIBRARY_PATH": "/steam/runtime", "LD_PRELOAD": "/steam/runtime/preload.so"},
+        ):
+            environment = backend.preview_environment(account)
+        self.assertEqual(environment["LD_LIBRARY_PATH"], "/usr/lib64:/usr/lib:/lib64:/lib")
+        self.assertNotIn("LD_PRELOAD", environment)
+        self.assertEqual(environment["SDL_AUDIODRIVER"], "pulseaudio")
 
 
 if __name__ == "__main__":

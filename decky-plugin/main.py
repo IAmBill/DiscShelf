@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import mimetypes
 import os
 import pwd
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -36,6 +39,25 @@ def runtime_candidates() -> list[tuple[str, Path]]:
         ("installed", INSTALLED_RUNTIME),
         ("development", DEVELOPMENT_RUNTIME),
     ]
+
+
+def preview_environment(account: pwd.struct_passwd) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.update(
+        HOME=str(USER_HOME),
+        USER=account.pw_name,
+        LOGNAME=account.pw_name,
+        PATH="/usr/local/bin:/usr/bin:/bin",
+        LD_LIBRARY_PATH="/usr/lib64:/usr/lib:/lib64:/lib",
+        XDG_RUNTIME_DIR=f"/run/user/{account.pw_uid}",
+        DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{account.pw_uid}/bus",
+        PULSE_SERVER=f"unix:/run/user/{account.pw_uid}/pulse/native",
+        SDL_AUDIODRIVER="pulseaudio",
+    )
+    # Decky inherits Steam's runtime loader configuration. Host binaries such
+    # as ffplay must not preload Steam/Decky libraries.
+    environment.pop("LD_PRELOAD", None)
+    return environment
 
 
 def find_runtime() -> tuple[str, Path] | None:
@@ -132,6 +154,24 @@ def manifest_settings(path: str | Path) -> dict[str, Any]:
     defaults = LAYOUTS.get(preset, LAYOUTS["list"])
     background = payload.get("background", {})
     music = payload.get("music", {})
+    discs = []
+    for disc in payload["discs"]:
+        animation = disc.get("animation", {})
+        discs.append(
+            {
+                "label": disc.get("label", ""),
+                "path": disc.get("path", ""),
+                "artwork": disc.get("artwork", ""),
+                "animation": {
+                    "type": animation.get("type", "none"),
+                    "delay": animation.get("delay", 2.5),
+                    "revolutionsPerMinute": animation.get("revolutionsPerMinute", 12),
+                    "angle": animation.get("angle", 30),
+                    "distance": animation.get("distance", 10),
+                    "period": animation.get("period", 1.8),
+                },
+            }
+        )
     return {
         "path": str(manifest),
         "title": payload["title"],
@@ -143,6 +183,7 @@ def manifest_settings(path: str | Path) -> dict[str, Any]:
         "musicPath": music.get("path", ""),
         "musicVolume": music.get("volume", 0.35),
         "musicLoop": music.get("loop", True),
+        "discs": discs,
     }
 
 
@@ -166,6 +207,54 @@ def _media_path(value: Any, label: str, extensions: set[str], manifest_dir: Path
     if resolved.suffix.lower() not in extensions:
         raise ValueError(f"{label} has an unsupported file type")
     return str(resolved.resolve()) if path.is_absolute() else value
+
+
+def _content_path(value: Any, label: str, manifest_dir: Path) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a non-empty path")
+    path = Path(value).expanduser()
+    resolved = path if path.is_absolute() else manifest_dir / path
+    if not resolved.is_file():
+        raise ValueError(f"{label} does not exist")
+    return str(resolved.resolve()) if path.is_absolute() else value
+
+
+def _disc_settings(value: Any, index: int, manifest_dir: Path) -> dict[str, Any]:
+    number = index + 1
+    if not isinstance(value, dict):
+        raise ValueError(f"Disc {number} must be an object")
+    label = value.get("label")
+    if not isinstance(label, str) or not label.strip():
+        raise ValueError(f"Disc {number} requires a label")
+    artwork = _media_path(
+        value.get("artwork", ""), f"Disc {number} artwork", IMAGE_EXTENSIONS, manifest_dir
+    )
+    animation = value.get("animation", {})
+    if not isinstance(animation, dict):
+        raise ValueError(f"Disc {number} animation must be an object")
+    animation_type = animation.get("type", "none")
+    if animation_type not in {"none", "spin", "wiggle"}:
+        raise ValueError(f"Disc {number} has an unknown animation type")
+    normalized_animation: dict[str, Any] = {
+        "type": animation_type,
+        "delay": _number(animation.get("delay", 2.5), f"Disc {number} delay", 0, 30),
+    }
+    if animation_type == "spin":
+        normalized_animation["revolutionsPerMinute"] = _number(
+            animation.get("revolutionsPerMinute", 12), f"Disc {number} speed", 1, 120
+        )
+    elif animation_type == "wiggle":
+        normalized_animation.update(
+            angle=_number(animation.get("angle", 30), f"Disc {number} angle", 0, 360),
+            distance=_number(animation.get("distance", 10), f"Disc {number} distance", 0, 100),
+            period=_number(animation.get("period", 1.8), f"Disc {number} period", 0.1, 30),
+        )
+    return {
+        "label": label.strip(),
+        "path": _content_path(value.get("path"), f"Disc {number} content", manifest_dir),
+        "artwork": artwork,
+        "animation": normalized_animation,
+    }
 
 
 def save_manifest_settings(path: str | Path, settings: Any) -> dict[str, Any]:
@@ -193,10 +282,17 @@ def save_manifest_settings(path: str | Path, settings: Any) -> dict[str, Any]:
     music_loop = settings.get("musicLoop", True)
     if not isinstance(music_loop, bool):
         raise ValueError("Music loop must be true or false")
+    discs = settings.get("discs")
+    if not isinstance(discs, list) or not discs:
+        raise ValueError("A manifest must contain at least one disc")
+    normalized_discs = [
+        _disc_settings(disc, index, manifest.parent) for index, disc in enumerate(discs)
+    ]
 
     payload["selector"] = {"layout": {"preset": preset, "columns": columns, "rows": rows}}
     payload["background"] = {"image": background_image, "dim": background_dim}
     payload["music"] = {"path": music_path, "volume": music_volume, "loop": music_loop}
+    payload["discs"] = normalized_discs
 
     source_stat = manifest.stat()
     temporary_name: str | None = None
@@ -224,10 +320,24 @@ def save_manifest_settings(path: str | Path, settings: Any) -> dict[str, Any]:
 class Plugin:
     async def _main(self):
         self.loop = asyncio.get_running_loop()
+        self.preview_process = None
         decky.logger.info("DiscShelf backend loaded")
 
     async def _unload(self):
+        await self._stop_music_preview()
         decky.logger.info("DiscShelf backend unloaded")
+
+    async def _stop_music_preview(self) -> None:
+        process = getattr(self, "preview_process", None)
+        self.preview_process = None
+        if process is None or process.returncode is not None:
+            return
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=2)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
 
     async def get_runtime_status(self) -> dict[str, Any]:
         runtime = find_runtime()
@@ -289,6 +399,80 @@ class Plugin:
             return {"ok": True, "settings": updated, "error": None}
         except (OSError, ValueError) as error:
             return {"ok": False, "settings": None, "error": str(error)}
+
+    async def preview_music(self, manifest_path: str, music_path: str, volume: float) -> dict[str, Any]:
+        try:
+            manifest = resolve_manifest(manifest_path)
+            normalized = _media_path(
+                music_path, "Background music", AUDIO_EXTENSIONS, manifest.parent
+            )
+            if not normalized:
+                raise ValueError("Select a background music file first")
+            preview_path = Path(normalized)
+            if not preview_path.is_absolute():
+                preview_path = manifest.parent / preview_path
+            preview_volume = _number(volume, "Music volume", 0, 1)
+            player = shutil.which("ffplay")
+            if player is None:
+                raise ValueError("ffplay is not installed")
+            await self._stop_music_preview()
+            account = pwd.getpwnam(USER_HOME.name)
+            environment = preview_environment(account)
+            self.preview_process = await asyncio.create_subprocess_exec(
+                player,
+                "-nodisp",
+                "-autoexit",
+                "-loglevel",
+                "error",
+                "-volume",
+                str(round(preview_volume * 100)),
+                str(preview_path.resolve()),
+                start_new_session=True,
+                user=account.pw_uid,
+                group=account.pw_gid,
+                env=environment,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.sleep(0.75)
+            if self.preview_process.returncode is not None:
+                stderr = await self.preview_process.stderr.read()
+                self.preview_process = None
+                detail = stderr.decode(errors="replace").strip()
+                raise ValueError(detail or "Audio preview exited before playback started")
+            return {"ok": True, "error": None}
+        except (KeyError, OSError, ValueError) as error:
+            return {"ok": False, "error": str(error)}
+
+    async def stop_music_preview(self) -> dict[str, Any]:
+        await self._stop_music_preview()
+        return {"ok": True, "error": None}
+
+    async def get_image_preview(self, manifest_path: str, image_path: str) -> dict[str, Any]:
+        try:
+            manifest = resolve_manifest(manifest_path)
+            normalized = _media_path(
+                image_path, "Artwork", IMAGE_EXTENSIONS, manifest.parent
+            )
+            if not normalized:
+                return {"ok": True, "dataUrl": None, "error": None}
+            preview_path = Path(normalized)
+            if not preview_path.is_absolute():
+                preview_path = manifest.parent / preview_path
+            if preview_path.stat().st_size > 16 * 1024 * 1024:
+                raise ValueError("Artwork preview is limited to 16 MB")
+            mime_type = mimetypes.guess_type(preview_path.name)[0] or "application/octet-stream"
+            if not mime_type.startswith("image/"):
+                raise ValueError("Artwork is not a supported image")
+            encoded = base64.b64encode(preview_path.read_bytes()).decode("ascii")
+            return {
+                "ok": True,
+                "dataUrl": f"data:{mime_type};base64,{encoded}",
+                "error": None,
+            }
+        except (OSError, ValueError) as error:
+            return {"ok": False, "dataUrl": None, "error": str(error)}
 
     async def launch_manifest(self, path: str) -> dict[str, Any]:
         runtime = find_runtime()
