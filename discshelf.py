@@ -294,6 +294,8 @@ class DiscShelfWindow(Gtk.ApplicationWindow):
         self.artwork_widgets: dict[int, AnimatedArtwork] = {}
         self.artwork_display_widgets: dict[int, Gtk.Widget] = {}
         self.card_widgets: list[Gtk.Widget] = []
+        self.input_mode = "controller"
+        self.mouse_suppressed_until = 0.0
 
         self.set_default_size(1100, 760)
         self.add_css_class("discshelf")
@@ -352,12 +354,25 @@ class DiscShelfWindow(Gtk.ApplicationWindow):
         root.append(footer)
 
         keys = Gtk.EventControllerKey()
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self.on_key_pressed)
         self.add_controller(keys)
-        self.controller_input = SDLControllerInput(
-            self.select_up, self.select_down, self.select_left, self.select_right,
-            self.activate_selected, self.close,
+        scroll = Gtk.EventControllerScroll.new(
+            Gtk.EventControllerScrollFlags.BOTH_AXES
+            | Gtk.EventControllerScrollFlags.DISCRETE
         )
+        scroll.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        scroll.connect("scroll", self.on_mouse_scroll)
+        self.add_controller(scroll)
+        self.controller_input = SDLControllerInput(
+            lambda: self.controller_action(self.select_up),
+            lambda: self.controller_action(self.select_down),
+            lambda: self.controller_action(self.select_left),
+            lambda: self.controller_action(self.select_right),
+            lambda: self.controller_action(self.activate_selected),
+            lambda: self.controller_action(self.close),
+        )
+        self.set_input_mode("controller")
         self.update_selection()
         GLib.timeout_add(150, self.update_responsive_sizes)
         self.connect("close-request", self.on_close_request)
@@ -410,12 +425,54 @@ class DiscShelfWindow(Gtk.ApplicationWindow):
         self.artwork_display_widgets[index] = widget
         return widget
 
+    def set_input_mode(self, mode: str) -> None:
+        self.input_mode = mode
+        if mode == "controller":
+            self.mouse_suppressed_until = time.monotonic() + 0.8
+        elif mode == "keyboard":
+            self.mouse_suppressed_until = time.monotonic() + 0.4
+        self.set_cursor_from_name("default" if mode == "mouse" else "none")
+
+    def controller_action(self, action) -> None:
+        self.set_input_mode("controller")
+        action()
+
+    def select_index(self, index: int, direction: int = 0) -> None:
+        if index < 0 or index >= len(self.manifest["discs"]):
+            return
+        self.selected_index = index
+        self.update_selection(direction)
+
+    def attach_mouse_selection(self, widget: Gtk.Widget, index: int) -> None:
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", lambda _motion, _x, _y: self.mouse_select(index))
+        widget.add_controller(motion)
+        click = Gtk.GestureClick()
+        click.connect("pressed", lambda _click, _count, _x, _y: self.mouse_select(index))
+        widget.add_controller(click)
+
+    def mouse_select(self, index: int) -> None:
+        if time.monotonic() < self.mouse_suppressed_until:
+            return
+        self.set_input_mode("mouse")
+        if index != self.selected_index:
+            self.select_index(index, index - self.selected_index)
+
+    def on_mouse_scroll(self, _controller, delta_x: float, delta_y: float) -> bool:
+        if not delta_x and not delta_y:
+            return False
+        self.set_input_mode("mouse")
+        delta = delta_x if abs(delta_x) > abs(delta_y) else delta_y
+        self.move(1 if delta > 0 else -1)
+        return True
+
     def build_list(self) -> Gtk.Widget:
         scroller = Gtk.ScrolledWindow(vexpand=True)
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         box.add_css_class("disc-list")
         box.connect("row-activated", lambda _box, row: self.launch(row.disc_index))
+        box.connect("row-selected", self.on_list_row_selected)
         for index, disc in enumerate(self.manifest["discs"]):
             row = Gtk.ListBoxRow()
             row.disc_index = index
@@ -428,6 +485,7 @@ class DiscShelfWindow(Gtk.ApplicationWindow):
             content.append(label)
             row.set_child(content)
             box.append(row)
+            self.attach_mouse_selection(row, index)
             self.card_widgets.append(content)
         scroller.set_child(box)
         self.selection_widget = box
@@ -450,6 +508,7 @@ class DiscShelfWindow(Gtk.ApplicationWindow):
             label = Gtk.Label(label=disc["label"])
             label.add_css_class("showcase-label")
             page.append(label)
+            self.attach_mouse_selection(page, index)
             self.showcase_stack.add_named(page, str(index))
         return self.showcase_stack
 
@@ -500,6 +559,7 @@ class DiscShelfWindow(Gtk.ApplicationWindow):
         flow.set_min_children_per_line(len(self.manifest["discs"]) if horizontal else self.columns)
         flow.set_max_children_per_line(len(self.manifest["discs"]) if horizontal else self.columns)
         flow.connect("child-activated", lambda _flow, child: self.launch(child.disc_index))
+        flow.connect("selected-children-changed", self.on_flow_selection_changed)
         card_width = 220 if horizontal else (310 if self.columns == 2 else 250)
         art_height = 150 if horizontal else (170 if self.columns == 2 else 135)
         for index, disc in enumerate(self.manifest["discs"]):
@@ -515,6 +575,7 @@ class DiscShelfWindow(Gtk.ApplicationWindow):
             card.append(label)
             child.set_child(card)
             flow.append(child)
+            self.attach_mouse_selection(child, index)
             self.card_widgets.append(card)
         scroller.set_child(flow)
         self.selection_widget = flow
@@ -572,9 +633,20 @@ class DiscShelfWindow(Gtk.ApplicationWindow):
                    Gdk.KEY_Escape: self.close, Gdk.KEY_BackSpace: self.close}
         action = actions.get(keyval)
         if action:
+            self.set_input_mode("keyboard")
             action()
             return True
         return False
+
+    def on_list_row_selected(self, _listbox, row) -> None:
+        if row is not None and row.disc_index != self.selected_index:
+            self.select_index(row.disc_index, row.disc_index - self.selected_index)
+
+    def on_flow_selection_changed(self, flowbox) -> None:
+        selected = flowbox.get_selected_children()
+        if selected and selected[0].disc_index != self.selected_index:
+            index = selected[0].disc_index
+            self.select_index(index, index - self.selected_index)
 
     def move(self, offset: int) -> None:
         self.selected_index = (self.selected_index + offset) % len(self.manifest["discs"])

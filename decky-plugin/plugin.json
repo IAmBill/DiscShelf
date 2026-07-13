@@ -1,0 +1,11 @@
+{
+  "api_version": 1,
+  "name": "DiscShelf",
+  "author": "IAmBill",
+  "flags": ["debug"],
+  "publish": {
+    "tags": ["emulation", "library", "utility"],
+    "description": "Manage and test DiscShelf multi-disc game launchers from Game Mode.",
+    "image": "https://opengraph.githubassets.com/1/IAmBill/DiscShelf"
+  }
+}

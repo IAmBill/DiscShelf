@@ -128,7 +128,10 @@ For example:
 
 Use the D-pad or left stick to choose, A to launch, and B to return to Steam.
 The arrow keys, Enter, Escape, and Backspace provide equivalent keyboard
-controls.
+controls. Mouse movement highlights entries, clicks select them, and the wheel
+moves through Showcase. Controller input has priority over keyboard input;
+both hide the pointer and briefly suppress hover changes so a stationary mouse
+cannot steal selection.
 
 For desktop testing without starting RetroArch:
 
@@ -149,6 +152,33 @@ Run the core compatibility tests:
 cd /home/bazzite/DiscShelf
 python3 -m unittest discover -s tests -v
 ```
+
+## Baseline Decky plugin
+
+The first Decky management plugin lives in `decky-plugin/`. It currently:
+
+- detects the installed or development DiscShelf runtime and reports its
+  version;
+- recursively discovers adjacent `*.discshelf.json` manifests under platform
+  ROM roots;
+- keeps the three prototype manifests visible until they are migrated;
+- summarizes validation state, disc count, and layout;
+- launches a valid manifest for testing from Game Mode;
+- does not modify Steam shortcuts or ROM directories.
+
+Build and test it with:
+
+```sh
+cd /home/bazzite/DiscShelf/decky-plugin
+pnpm install
+pnpm test
+pnpm build
+python3 -m unittest discover -s tests -v
+```
+
+For local development, build first and then run
+`scripts/deploy-local.sh` through `pkexec` or `sudo`. The deployment script
+copies only the plugin runtime files and restarts `plugin_loader.service`.
 
 ## Steam shortcut
 
