@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import pwd
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,15 @@ DEVELOPMENT_RUNTIME = USER_HOME / "DiscShelf/discshelf"
 PLATFORM_ROOT = USER_HOME / "Emulation/roms"
 DEVELOPMENT_MANIFEST_ROOT = USER_HOME / "DiscShelf/games"
 MANIFEST_SUFFIX = ".discshelf.json"
+LAYOUTS = {
+    "list": {"columns": 1, "rows": 4},
+    "showcase": {"columns": 1, "rows": 1},
+    "strip": {"columns": 4, "rows": 1},
+    "compact": {"columns": 2, "rows": 2},
+    "wide-grid": {"columns": 3, "rows": 2},
+}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".svg", ".webp"}
+AUDIO_EXTENSIONS = {".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav"}
 
 
 def runtime_candidates() -> list[tuple[str, Path]]:
@@ -46,6 +56,46 @@ def manifest_paths() -> tuple[list[Path], list[Path]]:
     return sorted(found), roots
 
 
+def resolve_manifest(path: str | Path) -> Path:
+    manifest = Path(path).expanduser().resolve()
+    allowed, _roots = manifest_paths()
+    if manifest not in allowed:
+        raise ValueError("Manifest is outside discovered roots")
+    return manifest
+
+
+def read_manifest(path: str | Path) -> tuple[Path, dict[str, Any]]:
+    manifest = resolve_manifest(path)
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Could not read manifest: {error}") from error
+    validation = summarize_manifest_payload(payload)
+    if not validation["valid"]:
+        raise ValueError(validation["error"])
+    return manifest, payload
+
+
+def summarize_manifest_payload(payload: Any) -> dict[str, Any]:
+    result = {"valid": False, "error": None}
+    try:
+        if not isinstance(payload, dict) or payload.get("version") != 1:
+            raise ValueError("Unsupported manifest version")
+        title = payload.get("title")
+        discs = payload.get("discs")
+        launch = payload.get("launch")
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("Missing title")
+        if not isinstance(discs, list) or not discs:
+            raise ValueError("No discs configured")
+        if not isinstance(launch, dict) or not launch.get("command"):
+            raise ValueError("Missing launch command")
+        result["valid"] = True
+    except (ValueError, TypeError) as error:
+        result["error"] = str(error)
+    return result
+
+
 def summarize_manifest(path: Path) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "path": str(path),
@@ -57,17 +107,11 @@ def summarize_manifest(path: Path) -> dict[str, Any]:
     }
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("version") != 1:
-            raise ValueError("Unsupported manifest version")
-        title = payload.get("title")
-        discs = payload.get("discs")
-        launch = payload.get("launch")
-        if not isinstance(title, str) or not title.strip():
-            raise ValueError("Missing title")
-        if not isinstance(discs, list) or not discs:
-            raise ValueError("No discs configured")
-        if not isinstance(launch, dict) or not launch.get("command"):
-            raise ValueError("Missing launch command")
+        validation = summarize_manifest_payload(payload)
+        if not validation["valid"]:
+            raise ValueError(validation["error"])
+        title = payload["title"]
+        discs = payload["discs"]
         summary.update(
             title=title,
             discCount=len(discs),
@@ -77,6 +121,104 @@ def summarize_manifest(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError, ValueError, TypeError) as error:
         summary["error"] = str(error)
     return summary
+
+
+def manifest_settings(path: str | Path) -> dict[str, Any]:
+    manifest, payload = read_manifest(path)
+    layout = payload.get("selector", {}).get("layout", {})
+    preset = layout.get("preset", "list")
+    if preset == "widegrid":
+        preset = "wide-grid"
+    defaults = LAYOUTS.get(preset, LAYOUTS["list"])
+    background = payload.get("background", {})
+    music = payload.get("music", {})
+    return {
+        "path": str(manifest),
+        "title": payload["title"],
+        "preset": preset,
+        "columns": layout.get("columns", defaults["columns"]),
+        "rows": layout.get("rows", defaults["rows"]),
+        "backgroundImage": background.get("image", ""),
+        "backgroundDim": background.get("dim", 0.7),
+        "musicPath": music.get("path", ""),
+        "musicVolume": music.get("volume", 0.35),
+        "musicLoop": music.get("loop", True),
+    }
+
+
+def _number(value: Any, label: str, minimum: float, maximum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a number")
+    if value < minimum or value > maximum:
+        raise ValueError(f"{label} must be between {minimum} and {maximum}")
+    return float(value)
+
+
+def _media_path(value: Any, label: str, extensions: set[str], manifest_dir: Path) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a path")
+    if not value:
+        return ""
+    path = Path(value).expanduser()
+    resolved = path if path.is_absolute() else manifest_dir / path
+    if not resolved.is_file():
+        raise ValueError(f"{label} does not exist")
+    if resolved.suffix.lower() not in extensions:
+        raise ValueError(f"{label} has an unsupported file type")
+    return str(resolved.resolve()) if path.is_absolute() else value
+
+
+def save_manifest_settings(path: str | Path, settings: Any) -> dict[str, Any]:
+    manifest, payload = read_manifest(path)
+    if not isinstance(settings, dict):
+        raise ValueError("Settings must be an object")
+
+    preset = settings.get("preset")
+    if preset not in LAYOUTS:
+        raise ValueError("Unknown layout preset")
+    columns = settings.get("columns")
+    rows = settings.get("rows")
+    if isinstance(columns, bool) or not isinstance(columns, int) or columns < 1 or columns > 8:
+        raise ValueError("Columns must be an integer between 1 and 8")
+    if isinstance(rows, bool) or not isinstance(rows, int) or rows < 1 or rows > 8:
+        raise ValueError("Rows must be an integer between 1 and 8")
+    background_image = _media_path(
+        settings.get("backgroundImage", ""), "Background image", IMAGE_EXTENSIONS, manifest.parent
+    )
+    music_path = _media_path(
+        settings.get("musicPath", ""), "Background music", AUDIO_EXTENSIONS, manifest.parent
+    )
+    background_dim = _number(settings.get("backgroundDim", 0.7), "Background dim", 0, 1)
+    music_volume = _number(settings.get("musicVolume", 0.35), "Music volume", 0, 1)
+    music_loop = settings.get("musicLoop", True)
+    if not isinstance(music_loop, bool):
+        raise ValueError("Music loop must be true or false")
+
+    payload["selector"] = {"layout": {"preset": preset, "columns": columns, "rows": rows}}
+    payload["background"] = {"image": background_image, "dim": background_dim}
+    payload["music"] = {"path": music_path, "volume": music_volume, "loop": music_loop}
+
+    source_stat = manifest.stat()
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=manifest.parent, prefix=f".{manifest.name}.", delete=False
+        ) as temporary:
+            temporary_name = temporary.name
+            json.dump(payload, temporary, indent=2, ensure_ascii=False)
+            temporary.write("\n")
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        temporary_stat = os.stat(temporary_name)
+        if (temporary_stat.st_mode & 0o7777) != (source_stat.st_mode & 0o7777):
+            os.chmod(temporary_name, source_stat.st_mode & 0o7777)
+        if (temporary_stat.st_uid, temporary_stat.st_gid) != (source_stat.st_uid, source_stat.st_gid):
+            os.chown(temporary_name, source_stat.st_uid, source_stat.st_gid)
+        os.replace(temporary_name, manifest)
+    finally:
+        if temporary_name and os.path.exists(temporary_name):
+            os.unlink(temporary_name)
+    return manifest_settings(manifest)
 
 
 class Plugin:
@@ -134,14 +276,28 @@ class Plugin:
             "roots": [str(root) for root in roots],
         }
 
+    async def get_manifest_settings(self, path: str) -> dict[str, Any]:
+        try:
+            settings = await asyncio.to_thread(manifest_settings, path)
+            return {"ok": True, "settings": settings, "error": None}
+        except (OSError, ValueError) as error:
+            return {"ok": False, "settings": None, "error": str(error)}
+
+    async def update_manifest_settings(self, path: str, settings: dict[str, Any]) -> dict[str, Any]:
+        try:
+            updated = await asyncio.to_thread(save_manifest_settings, path, settings)
+            return {"ok": True, "settings": updated, "error": None}
+        except (OSError, ValueError) as error:
+            return {"ok": False, "settings": None, "error": str(error)}
+
     async def launch_manifest(self, path: str) -> dict[str, Any]:
         runtime = find_runtime()
         if runtime is None:
             return {"ok": False, "pid": None, "error": "DiscShelf runtime not found"}
-        manifest = Path(path).expanduser().resolve()
-        allowed, _roots = manifest_paths()
-        if manifest not in allowed:
-            return {"ok": False, "pid": None, "error": "Manifest is outside discovered roots"}
+        try:
+            manifest = resolve_manifest(path)
+        except ValueError as error:
+            return {"ok": False, "pid": None, "error": str(error)}
         summary = summarize_manifest(manifest)
         if not summary["valid"]:
             return {"ok": False, "pid": None, "error": summary["error"]}

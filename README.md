@@ -164,6 +164,12 @@ The first Decky management plugin lives in `decky-plugin/`. It currently:
 - keeps the three prototype manifests visible until they are migrated;
 - summarizes validation state, disc count, and layout;
 - launches a valid manifest for testing from Game Mode;
+- edits layout presets, optional grid overrides, background artwork, dimming,
+  background music, volume, and looping in a dedicated Game Mode modal;
+- uses Decky's filtered filesystem picker for navigable image and audio
+  selection, while preserving portable relative paths already in manifests;
+- validates and atomically replaces edited manifest files without changing
+  unrelated launch or disc settings;
 - does not modify Steam shortcuts or ROM directories.
 
 Build and test it with:
